@@ -1,0 +1,1 @@
+.\.venv314\Scripts\python.exe -m uvicorn app:app --port 8000

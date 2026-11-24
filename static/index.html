@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>i-Score · Encrypted Scoring Console</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#14181f;--mu:#667085;--bd:#e3e6eb;--ac:#0b6e4f;--bad:#c0392b;--ok:#1a7f4b;--mono:ui-monospace,Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1318;--card:#171c23;--tx:#e8ebf0;--mu:#8b94a3;--bd:#262d38;--ac:#3ecf9b;--bad:#ff7b6b;--ok:#4ade80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,Segoe UI,sans-serif}
+header{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--bd);background:var(--card);flex-wrap:wrap}
+h1{font-size:16px;margin:0}.pill{font-size:12px;padding:3px 9px;border-radius:99px;border:1px solid var(--bd);color:var(--mu)}
+.pill.g{color:var(--ok);border-color:var(--ok)}.pill.r{color:var(--bad);border-color:var(--bad)}
+main{display:grid;grid-template-columns:270px 1fr;gap:16px;padding:16px 20px;max-width:1200px;margin:auto}
+@media(max-width:800px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px}
+.list{max-height:75vh;overflow:auto;padding:6px}.row{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px;cursor:pointer}
+.row:hover,.row.sel{background:var(--bg)}.row.sel{outline:1px solid var(--ac)}
+.mono{font-family:var(--mono);font-size:12px;color:var(--mu);word-break:break-all}
+button,select,input{font:inherit;padding:7px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx)}
+button{cursor:pointer}button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
+.big{font-size:56px;font-weight:700;line-height:1}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-top:14px}
+.k{font-size:12px;color:var(--mu)}h2{font-size:13px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.05em;color:var(--mu)}
+.stack>*+*{margin-top:14px}.fl{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+table{width:100%;border-collapse:collapse;font-size:12.5px}td,th{text-align:left;padding:6px;border-bottom:1px solid var(--bd);vertical-align:top}
+.up{color:var(--ok)}.dn{color:var(--bad)}.note{background:var(--bg);border-radius:8px;padding:8px 10px;margin-top:10px;font-size:12.5px;color:var(--mu)}
+.bar{display:flex;height:12px;border-radius:6px;overflow:hidden;position:relative;margin-top:10px}.bar i{display:block;height:100%}
+.mk{position:absolute;top:-4px;width:3px;height:20px;background:var(--tx);border-radius:2px}
+.sc{display:flex;justify-content:space-between;font-size:11px;color:var(--mu);margin-top:3px}
+details{margin:0}summary{cursor:pointer;font-weight:600}details p,details li{color:var(--mu);font-size:13px;margin:6px 0}
+</style></head><body>
+<header><h1>i-Score · Encrypted Scoring Console</h1>
+<div class="fl"><span class="pill g">Employee view: customer data is never shown</span><span class="pill" id="info"></span></div></header>
+<main style="grid-template-columns:1fr;padding-bottom:0"><div class="card"><details open><summary>How to read this page</summary>
+<ol><li><b>Every customer record is a ciphertext</b>: an encrypted list of 11 numbers (utilization, late payments, open accounts…). The left list shows only an ID and a fingerprint of that ciphertext.</li>
+<li><b>Computing a score:</b> the <i>scoring server</i> (Worker) multiplies and adds directly on the encrypted numbers using the model's weights. It never has the decryption key, so it never sees the values.</li>
+<li><b>The Custodian</b> is the only component holding the secret key. It decrypts <i>only the results</i> (the score and five factor sub-totals) and hands them to you. It never releases the customer's raw values.</li>
+<li><b>Updating a record</b> (new loan, card, late payment…) adds an encrypted-compatible change to the ciphertext. The old values stay encrypted. Then the score is recomputed to show the impact.</li>
+<li><b>Consent</b> is checked before any computation. Revoke it and every operation is refused (and logged).</li></ol>
+<p><b>Who sees what:</b> You: IDs, ciphertext fingerprints, scores and factor points. Scoring server: only ciphertexts. Custodian: the key, and only releases results.</p></details></div></main>
+<main>
+ <div class="card list" id="list"></div>
+ <div class="stack" id="detail"><div class="card">← Select a customer to begin. Their record exists only as a CKKS ciphertext.</div></div>
+</main>
+<main style="grid-template-columns:1fr;padding-top:0"><div class="card"><h2>Audit trail (stand-in for the Hyperledger Fabric ledger)</h2>
+<p class="k">Every action is logged with a hash of the ciphertext at that moment and the model version, so auditors can verify what was computed and on which data version, without seeing the data. DENIED = blocked by consent.</p><table id="audit"></table></div>
+<div class="card" style="margin-top:14px"><details><summary>Glossary</summary>
+<p><b>CKKS</b>: a fully homomorphic encryption scheme for approximate real-number arithmetic; results carry tiny rounding error.</p>
+<p><b>Ciphertext</b>: the encrypted record. Without the secret key it is indistinguishable from random data.</p>
+<p><b>Levels</b>: each multiplication consumes one level; this circuit needs 4, so the scheme is configured with exactly 4.</p>
+<p><b>Logit</b>: the model's raw output (log-odds of default). The score is a straight-line rescaling of it, so no sigmoid is needed for the score.</p>
+<p><b>Poly-sigmoid</b>: a degree-3 polynomial approximating the sigmoid so a default probability can be computed under encryption (exact sigmoid isn't possible).</p>
+<p><b>Factor points</b>: how many points a factor adds/removes versus an average customer in the training data.</p></details></div></main>
+<script>
+const $=id=>document.getElementById(id);let C=[],sel=null,last=null,lastU='',INFO={};
+const api=(p,m='GET',b)=>fetch('/api/'+p,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined}).then(async r=>{const j=await r.json();if(!r.ok)throw new Error(j.detail||r.status);return j});
+const BANDS=[[400,520,'Weak','#c0392b'],[521,625,'Unsatisfactory','#e67e22'],[626,699,'Satisfactory','#d4ac0d'],[700,799,'Good','#52b788'],[800,850,'Excellent','#1a7f4b']];
+const EV={credit_card:[['util_pp','Utilization change (percentage points)',0]],loan:[['kind','Type (personal / mortgage)','personal'],['payment_pct','Monthly payment (% of income)',10]],late_payment:[],close_account:[],dependent:[]};
+const NAMES={credit_card:'New credit card',loan:'New loan',late_payment:'Late payment (30–89 days)',close_account:'Close an account',dependent:'Add a dependent'};
+const WHAT={credit_card:'Adds +1 open credit line. Utilization changes by the points you enter (a new unused card lowers it; a drawn balance raises it).',loan:'Adds +1 open credit line; a mortgage also adds +1 real-estate loan. The monthly payment raises the debt ratio (first-order approximation).',late_payment:'Adds +1 to the total late-payment count. 90+ day lates are not supported (needs an encrypted comparison).',close_account:'Removes 1 open credit line.',dependent:'Adds +1 dependent.'};
+const FEAT={late_total:'late payments',any_late90:'any 90+ late',late_code_flag:'bureau placeholder code',util:'card utilization',log_debt_ratio:'debt ratio',open_lines:'open accounts',re_loans:'real-estate loans',age:'age',log_income:'income',dependents:'dependents',income_missing:'income missing'};
+const pts=v=>v==null?'–':(v>0?'+':'')+v;
+async function load(){C=await api('customers');
+ $('list').innerHTML=C.map(c=>`<div class="row ${c.id==sel?'sel':''}" onclick="pick('${c.id}')"><div><b>${c.id}</b><div class="mono">🔒 ${c.hash} · v${c.version}</div></div><span class="pill ${c.consent?'g':'r'}">${c.consent?'consent':'revoked'}</span></div>`).join('');
+ const a=await api('audit');$('audit').innerHTML='<tr><th>Time (UTC)</th><th>Event</th><th>Customer</th><th>Ciphertext hash</th><th>Model</th><th>Detail</th></tr>'+a.map(e=>`<tr><td>${e.ts}</td><td>${e.event}</td><td>${e.customer}</td><td class="mono">${e.ct_hash}</td><td class="mono">${e.model}</td><td>${e.note||''} ${e.score?'→ score '+e.score:''}</td></tr>`).join('');}
+function pick(id){sel=id;last=null;lastU='';render();load()}
+function render(){const c=C.find(x=>x.id==sel);if(!c)return;
+ $('detail').innerHTML=`<div class="card"><div class="fl" style="justify-content:space-between"><h2 style="margin:0">${c.id}</h2><button onclick="cons(${!c.consent})">${c.consent?'Revoke consent':'Grant consent'}</button></div>
+ <div class="mono" style="margin-top:8px">ciphertext v${c.version} · ${c.kb} KB · fingerprint ${c.hash}<br>${c.preview}…</div>
+ <p class="k">This is everything the server holds about the customer: ${c.kb} KB of encrypted data. <b>v${c.version}</b> = number of updates applied. The <b>fingerprint</b> (SHA-256 prefix) changes whenever the record changes. Consent is checked before every operation.</p></div>
+ <div class="card"><h2>Score</h2><div class="fl"><button class="p" onclick="doScore()">Compute score on encrypted data</button></div><div id="res"></div></div>
+ <div class="card"><h2>Update record (applied homomorphically)</h2><div class="fl"><select id="ev" onchange="fields()">${Object.keys(EV).map(k=>`<option value="${k}">${NAMES[k]}</option>`).join('')}</select><span id="fs" class="fl"></span><button class="p" onclick="doUpd()">Apply &amp; re-score</button></div><p class="k" id="what"></p><div id="ures">${lastU}</div></div>`;fields();if(last)show(last)}
+function fields(){const e=$('ev').value;$('what').textContent=WHAT[e];$('fs').innerHTML=EV[e].map(([k,l,d])=>k=='kind'?`<label class="k">${l} <select id="f_${k}"><option>personal</option><option>mortgage</option></select></label>`:`<label class="k">${l} <input id="f_${k}" type="number" value="${d}" style="width:80px"></label>`).join('')}
+function scale(s){const w=b=>(b[1]-b[0]+1);return `<div class="bar">${BANDS.map(b=>`<i style="width:${w(b)/451*100}%;background:${b[3]}"></i>`).join('')}<span class="mk" style="left:calc(${(s-400)/450*100}% - 1px)"></span></div><div class="sc"><span>400 Weak</span><span>521</span><span>626</span><span>700 Good</span><span>800</span><span>850</span></div>`}
+function show(r){$('res').innerHTML=`<div class="grid"><div><div class="k">i-Score (400–850)</div><div class="big">${r.score}</div><b>${r.band}</b></div>
+ <div><div class="k">Default probability</div><b>${(r.pd*100).toFixed(1)}%</b><div class="k">From a polynomial sigmoid evaluated on ciphertext. Shown for reference; the score itself comes from the logit.</div></div>
+ <div><div class="k">Encryption error</div><b>${r.abs_err.toExponential(1)}</b><div class="k">Difference between the encrypted result and a plaintext check (logit units). Tiny = CKKS is accurate enough.</div></div>
+ <div><div class="k">Time</div><b>${r.ms_encrypted_compute} ms encrypted · ${r.ms_decrypt} ms decrypt</b><div class="k">Scoring + 5 factor sub-totals on ciphertext, then decrypting only the results.</div></div></div>${scale(r.score)}
+ <h2 style="margin-top:16px">Why this score: factor breakdown</h2><table><tr><th>Factor</th><th>Published weight*</th><th>Points vs average</th><th>Fed by</th></tr>
+ ${r.factors.map(f=>`<tr><td><b>${f.name}</b></td><td>${f.weight?f.weight+'%':'–'}</td><td class="${f.points>0?'up':f.points<0?'dn':''}">${f.points==null?'no data in training set':pts(f.points)}</td><td class="k">${f.features.map(x=>FEAT[x]).join(', ')||'–'}</td></tr>`).join('')}</table>
+ <div class="note">Average-profile score in this model: <b>${r.baseline}</b>. Baseline + factor points ≈ score (before clipping to 400–850). Points are decrypted <i>results</i>, not raw data; releasing them reveals more than the total alone, which is the trade-off of giving reason codes.<br>
+ *i-Score does not publish its model. The five factors and weights come from a third-party article (Money Fellows), not i-Score. Our model is logistic regression on Give Me Some Credit, which has no credit-history-length or inquiry data. The score anchor (700 at the dataset's 6.7% default rate, 50 points per doubling of odds) is our assumption.</div>`}
+async function doScore(){try{last=await api('score/'+sel,'POST');show(last)}catch(e){$('res').innerHTML=`<p class="dn">${e.message}</p>`}load()}
+async function doUpd(){const ev=$('ev').value,params={};EV[ev].forEach(([k])=>params[k]=k=='kind'?$('f_'+k).value:parseFloat($('f_'+k).value)||0);
+ try{const r=await api('update/'+sel,'POST',{event:ev,params});last=r.after;
+ const rows=r.after.factors.map((f,i)=>[f.name,f.points,r.before.factors[i].points]).filter(x=>x[1]!=null&&Math.abs(x[1]-x[2])>=0.1);
+ lastU=`<p><b>${NAMES[ev]}</b>: ${r.before.score} → <b>${r.after.score}</b> <span class="${r.change>=0?'up':'dn'}">(${pts(r.change)})</span> · ciphertext now v${r.version}</p>
+ <table><tr><th>Factor that moved</th><th>Before</th><th>After</th><th>Change</th></tr>${rows.map(x=>`<tr><td>${x[0]}</td><td>${pts(x[2])}</td><td>${pts(x[1])}</td><td class="${x[1]-x[2]>=0?'up':'dn'}">${pts(+(x[1]-x[2]).toFixed(1))}</td></tr>`).join('')||'<tr><td colspan=4 class="k">No factor moved by ≥0.1 point.</td></tr>'}</table>
+ <div class="note"><b>Under the hood:</b> the server added the change <code>${Object.entries(r.changes).map(([k,v])=>k+' '+pts(v)).join(', ')}</code> to the encrypted record (raw units; rescaled to the model's standardized units before adding). The existing values stayed encrypted. The score was computed before and after on ciphertext.</div>`;
+ render()}catch(e){$('ures').innerHTML=`<p class="dn">${e.message}</p>`}load()}
+async function cons(g){await api('consent/'+sel,'POST',{granted:g});await load();render()}
+api('info').then(i=>{INFO=i;$('info').textContent=`${i.scheme} · N=${i.poly_mod} · ${i.levels} levels · model ${i.model}`});load();setInterval(()=>{if(!document.hidden)load()},8000);
+</script></body></html>

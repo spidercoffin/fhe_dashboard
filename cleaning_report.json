@@ -1,0 +1,84 @@
+{
+  "baseline_raw_lr": {
+    "auc": 0.7143272734399044,
+    "ks": 0.34141080590183764
+  },
+  "rows_in": 150000,
+  "dropped_age_lt_18": 1,
+  "late_placeholder_rows_flagged": 269,
+  "income_missing_or_zero": 31365,
+  "impute_debt_ratio_median": 0.29244026450000005,
+  "impute_income_median": 5436.5,
+  "dependents_missing": 3924,
+  "clipped": {
+    "util": 371,
+    "debt_ratio": 862,
+    "age": 13,
+    "open_lines": 62,
+    "re_loans": 94,
+    "dependents": 12,
+    "income": 589
+  },
+  "caps": {
+    "util": [
+      0.0,
+      2.0
+    ],
+    "debt_ratio": [
+      0.0,
+      5.0
+    ],
+    "age": [
+      18.0,
+      100.0
+    ],
+    "open_lines": [
+      0.0,
+      40.0
+    ],
+    "re_loans": [
+      0.0,
+      10.0
+    ],
+    "dependents": [
+      0.0,
+      8.0
+    ],
+    "income": [
+      0.0,
+      35000.0
+    ]
+  },
+  "clean_lr": {
+    "auc": 0.8615465266107815,
+    "ks": 0.565005863622779
+  },
+  "logit_range_p0.1_p99.9": [
+    -5.0735277733621,
+    1.7243882366490375
+  ],
+  "poly_sigmoid_on_[-8,8]": {
+    "deg3": {
+      "coeffs_high_to_low": [
+        -0.0015910678416308406,
+        -5.713812855099294e-18,
+        0.15006692170019512,
+        0.5000000000000001
+      ],
+      "auc_after_approx": 0.8615465266107815,
+      "max_abs_err_vs_sigmoid": 0.09845208517446377
+    },
+    "deg5": {
+      "coeffs_high_to_low": [
+        4.2149365347682106e-05,
+        1.9957954258330762e-19,
+        -0.0045913488364028735,
+        -1.2139856747463634e-17,
+        0.19125470376070886,
+        0.49999999999999994
+      ],
+      "auc_after_approx": 0.8612105207600752,
+      "max_abs_err_vs_sigmoid": 0.04713518830939947
+    }
+  }
+}
