@@ -10,16 +10,21 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 HERE = pathlib.Path(__file__).parent
-D = next(p for p in [HERE / "data", HERE.parent, HERE] if (p / "model_artifacts.json").exists())
+D = next(p for p in [HERE, HERE / "data", HERE.parent]
+         if (p / "model_artifacts.json").exists()
+         and all(k in json.loads((p / "model_artifacts.json").read_text()) for k in ("features", "weights", "bias", "score", "poly_range")))
 ART = json.load(open(D / "model_artifacts.json"))
+DATA = next(p for p in [HERE / "data", HERE, HERE.parent]
+            if (p / "cs-training-clean.csv").exists())
 F = ART["features"]; IDX = {f: i for i, f in enumerate(F)}
 MU = np.array([ART["mean"][f] for f in F]); SD = np.array([ART["std"][f] for f in F])
 W = [ART["weights"][f] for f in F]; B = ART["bias"]
 MODEL_HASH = hashlib.sha256(json.dumps(ART, sort_keys=True).encode()).hexdigest()[:12]
-_x = np.linspace(-6, 3, 901)
+_x = np.linspace(*ART["poly_range"], 901)
 C3, C2, C1, C0 = np.polyfit(_x, 1 / (1 + np.exp(-_x)), 3)   # deg-3 sigmoid, fit on observed logit range
-Z_REF = np.log(0.0668 / 0.9332)                             # default rate of the training data
-LO, HI, BASE_SCORE, PDO = 400, 850, 700, 50                 # LO/HI/bands are published; BASE_SCORE and PDO are OUR assumption (i-Score doesn't publish its calibration)
+SC = ART["score"]                                           # written by prepare_dataset.py
+LO, HI, BASE_SCORE, PDO, REF_PD = SC["lo"], SC["hi"], SC["base_score"], SC["pdo"], SC["reference_pd"]
+Z_REF = np.log(REF_PD / (1 - REF_PD))                       # LO/HI/bands are published; the anchors (700 = 5% PD, 800 = 1% PD) are OUR design choice
 FACTORS = [  # key, name, published weight % (third-party article, not i-Score), our model features that feed it
     ("pay", "Payment history", 35, ["late_total", "any_late90", "late_code_flag"]),
     ("debt", "Outstanding debt", 30, ["util", "log_debt_ratio"]),
@@ -92,7 +97,7 @@ vault, consent, version, audit = {}, {}, {}, []
 
 
 def seed(n=32):
-    df = pd.read_csv(D / "cs-training-clean.csv").sample(n, random_state=7).reset_index(drop=True)
+    df = pd.read_csv(DATA / "cs-training-clean.csv").sample(n, random_state=7).reset_index(drop=True)
     X = pd.DataFrame({"util": df.util, "age": df.age, "log_income": np.log1p(df.income),
                       "log_debt_ratio": np.log1p(df.debt_ratio), "open_lines": df.open_lines, "re_loans": df.re_loans,
                       "dependents": df.dependents, "late_total": (df.late30 + df.late60 + df.late90).clip(0, 10),
@@ -133,7 +138,7 @@ class Cons(BaseModel):
 
 
 @app.get("/api/info")
-def info(): return dict(model=MODEL_HASH, scheme="CKKS", poly_mod=8192, levels=4, features=len(F), customers=len(vault), lo=LO, hi=HI, base=BASE_SCORE, pdo=PDO)
+def info(): return dict(model=MODEL_HASH, scheme="CKKS", poly_mod=8192, levels=4, features=len(F), customers=len(vault), lo=LO, hi=HI, base=BASE_SCORE, pdo=round(PDO, 2), ref_pd=REF_PD)
 
 
 @app.get("/api/customers")
