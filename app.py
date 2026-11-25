@@ -15,7 +15,7 @@ D = next(p for p in [HERE, HERE / "data", HERE.parent]
          and all(k in json.loads((p / "model_artifacts.json").read_text()) for k in ("features", "weights", "bias", "score", "poly_range")))
 ART = json.load(open(D / "model_artifacts.json"))
 DATA = next(p for p in [HERE / "data", HERE, HERE.parent]
-            if (p / "cs-training-clean.csv").exists())
+            if (p / "cs-training-model-ready.csv").exists())
 F = ART["features"]; IDX = {f: i for i, f in enumerate(F)}
 MU = np.array([ART["mean"][f] for f in F]); SD = np.array([ART["std"][f] for f in F])
 W = [ART["weights"][f] for f in F]; B = ART["bias"]
@@ -41,6 +41,10 @@ def to_score(z):
 
 def band(s):                                                # bands as published by Banky (Jul 2026)
     return "Weak" if s < 521 else "Unsatisfactory" if s < 626 else "Satisfactory" if s < 700 else "Good" if s < 800 else "Excellent"
+
+
+POP = pd.read_csv(DATA / "cs-training-model-ready.csv")     # already standardized + clipped: exactly the vectors that get encrypted
+POP_SC = np.clip(np.round(BASE_SCORE - PDO / np.log(2) * (POP[F].values @ np.array(W) + B - Z_REF)), LO, HI)   # every dataset customer's score
 
 
 class Custodian:
@@ -97,13 +101,7 @@ vault, consent, version, audit = {}, {}, {}, []
 
 
 def seed(n=32):
-    df = pd.read_csv(DATA / "cs-training-clean.csv").sample(n, random_state=7).reset_index(drop=True)
-    X = pd.DataFrame({"util": df.util, "age": df.age, "log_income": np.log1p(df.income),
-                      "log_debt_ratio": np.log1p(df.debt_ratio), "open_lines": df.open_lines, "re_loans": df.re_loans,
-                      "dependents": df.dependents, "late_total": (df.late30 + df.late60 + df.late90).clip(0, 10),
-                      "any_late90": (df.late90 > 0).astype(int), "late_code_flag": df.late_code_flag,
-                      "income_missing": df.income_missing})[F].astype(float).values
-    Z = np.clip((X - MU) / SD, -4, 4)
+    Z = POP.sample(n, random_state=7).reset_index(drop=True)[F].values     # label column is never used
     for i, z in enumerate(Z):
         cid = f"IS-{1001 + i}"; vault[cid] = cust.enroll(cid, z); consent[cid] = True; version[cid] = 1
         log("ENROLL", cid, vault[cid])
@@ -122,7 +120,7 @@ def guard(cid):
 
 def run_score(cid):
     t = time.perf_counter(); ez, ep, eg = worker.score(vault[cid]); t1 = time.perf_counter()
-    r = cust.release(cid, ez, ep, eg); r["ms_encrypted_compute"] = round((t1 - t) * 1000); r["ms_decrypt"] = round((time.perf_counter() - t1) * 1000)
+    r = cust.release(cid, ez, ep, eg); r["percentile"] = round(float((POP_SC < r["score"]).mean() * 100), 1); r["ms_encrypted_compute"] = round((t1 - t) * 1000); r["ms_decrypt"] = round((time.perf_counter() - t1) * 1000)
     return r
 
 
@@ -138,7 +136,9 @@ class Cons(BaseModel):
 
 
 @app.get("/api/info")
-def info(): return dict(model=MODEL_HASH, scheme="CKKS", poly_mod=8192, levels=4, features=len(F), customers=len(vault), lo=LO, hi=HI, base=BASE_SCORE, pdo=round(PDO, 2), ref_pd=REF_PD)
+def info(): return dict(model=MODEL_HASH, scheme="CKKS", poly_mod=8192, levels=4, features=len(F), customers=len(vault), lo=LO, hi=HI, base=BASE_SCORE, pdo=round(PDO, 2), ref_pd=REF_PD,
+                                   pop=dict(n=len(POP), median=int(np.median(POP_SC)), p25=int(np.percentile(POP_SC, 25)), p75=int(np.percentile(POP_SC, 75)),
+                                            good_share=round(float((POP_SC >= 700).mean() * 100)), default_rate=round(float(POP["default"].mean() * 100), 2)))
 
 
 @app.get("/api/customers")
